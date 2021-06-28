@@ -1,0 +1,184 @@
+---
+title: "boxjenkins"
+output: html_document
+author: e-sang
+---
+
+```{r setup, include=FALSE}
+require(forecast)
+require(astsa)
+require(tidyverse)
+require(broom)
+
+source(here::here("script/datawrangle.R"))
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# box jenkins sequence
+
+### model identification
+**stationarity**  
+run sequence plot:
+```{r run sequence}
+ggplot(data = data[300:350,]) +
+  geom_point(aes(x = rownames(data)[300:350], y = CO2))
+```  
+
+shows not the same mean = non stationary  
+variance probably not constant either  
+
+autocorrelation plot:  
+```{r acf}
+acf(data$CO2, na.action = na.pass)
+```  
+
+shows very slow decay - indication of non-stationarity  
+
+*adjustments*  
+to adjust for non-stationarity, use differences:  
+Y_i = Z_i - Z_i-1  
+```{r diff}
+diff <- diff(data$CO2)
+data.diff <- ts(diff, start=c(1958,1), frequency=12)
+plot(diff)
+```  
+
+mean + variance look around constant  
+
+**seasonality**  
+look at something called a seasonal subseries plot to see if there are differences in means between months  
+```{r seasonal subseries}
+par(mfrow=c(1,1))
+monthplot(data.diff, phase=cycle(data.diff), 
+          ylab="CO2 Concentrations",
+          main="Seasonal Subseries Plot of CO2 Concentrations",
+          xlab="Month",
+          labels=c("Feb-Jan","Mar-Feb","Apr-Mar","May-Apr",
+                   "Jun-May","Jul-Jun","Aug-Jul","Sep-Aug",
+                   "Oct-Sep","Nov-Oct","Dec-Nov","Jan-Dec"))
+```  
+
+definitely a difference!  
+
+*adjustments*  
+another difference, but this time every 12th term:  
+```{r diff seasonal}
+diff12 <- diff(diff,12)
+```  
+
+**determining q for moving average**  
+at lag q + 1, the autocorrelation plot becomes 0 (within 95% CIs)  
+will see this in the form MA(q)  
+in R we will plug this into the arima() function in 'order'  
+```{r MA(q)}
+acf(diff12, na.action = na.pass, ci.type = "ma")
+```  
+
+order of MA: q = 2  
+
+since there is also a spike at lag 12, seasonal q also exists and seasonal q = 1  
+
+**determining p for autocorrelation**  
+at lag p + 1, the partial autocorrelation plot becomes 0 (within 95% CIs)  
+will see this in the form AR(q)  
+in R we will plug this into the arima() function in 'order'  
+```{r AR(p)}
+pacf(diff12, na.action = na.pass)
+```  
+
+p = 3; seasonal p = 1  
+
+### model estimation  
+
+```{r model est 1}
+fit <- arima(data$CO2, order = c(3,1,2), seasonal = list(order=c(1,1,1),period=12))
+summary(fit)
+checkresiduals(fit)
+```  
+
+```{r model est 2}
+fit1 <- arima(data$CO2, order = c(3,1,1), seasonal = list(order=c(0,1,1),period=12))
+summary(fit1)
+checkresiduals(fit1)
+```  
+
+summary: look at AIC, loglikelihood, RMSE  
+AIC: lower = better fitting (and accounts for complexity of model)  
+loglikelihood: measure of model fit, didn't really change for these two models  
+RMSE: measure of residuals, lower = less residuals/better fitting  
+
+residual plots: run-sequence, acf of residuals, histogram of residuals  
+run-sequence plot: shows pretty even distribution w/ no obvious pattern  
+autocorrelation plot: mostly around 0, indicating random distribution of resids.  
+histogram: normally distributed = good  
+
+## forecasting/model interpretation
+
+often, interpreting the individual parameters of the model doesn't make a lot of sense and gets real complicated real fast. it's better to look at what the model implies to get a sense of what it means.
+
+```{r 2 years}
+predicted <- forecast(fit1, h=24)
+predicted.dat <- data.frame(mean = predicted$mean,
+                            lower.80 = predicted$lower[,1],
+                            upper.80 = predicted$upper[,1],
+                            lower.95 = predicted$lower[,2],
+                            upper.95 = predicted$upper[,2],
+                            date2 = seq(from = 2021.37, to = 2023.287, by = (1/12)))
+og.dat <- data.frame(mean = data$CO2[745:760],
+                     lower.80 = data$CO2[745:760],
+                     upper.80 = data$CO2[745:760],
+                     lower.95 = data$CO2[745:760],
+                     upper.95 = data$CO2[745:760],
+                     date2 = data$date2[745:760])
+all.dat <- rbind(og.dat, predicted.dat)
+
+gg <- ggplot(all.dat) + 
+  aes(x = date2) +
+  expand_limits(x = c(2020:2023.287), y = c(400:425)) +
+  scale_y_continuous(name = c("CO2 concentration (ppm)")) +
+  scale_x_continuous(name = c("time (year)")) +
+  geom_point(aes(y = mean), size = 2, color = "red") +
+  geom_line(aes(y = mean), size = 1) +
+  geom_ribbon(aes(ymin = lower.80, ymax = upper.80), fill = "blue", alpha = 0.3) +
+  geom_ribbon(aes(ymin = lower.95, ymax = upper.95), fill = "blue", alpha = 0.3)
+print(head(predicted.dat))
+print(gg)
+```
+
+
+```{r 5 years}
+predicted5 <- forecast(fit1, h=60)
+predicted.dat5 <- data.frame(mean = predicted5$mean,
+                            lower.80 = predicted5$lower[,1],
+                            upper.80 = predicted5$upper[,1],
+                            lower.95 = predicted5$lower[,2],
+                            upper.95 = predicted5$upper[,2],
+                            date2 = seq(from = 2021.37, to = 2026.287, by = (1/12)))
+og.dat <- data.frame(mean = data$CO2[745:760],
+                     lower.80 = data$CO2[745:760],
+                     upper.80 = data$CO2[745:760],
+                     lower.95 = data$CO2[745:760],
+                     upper.95 = data$CO2[745:760],
+                     date2 = data$date2[745:760])
+all.dat5 <- rbind(og.dat, predicted.dat5)
+
+gg <- ggplot(all.dat5) + 
+  aes(x = date2) +
+  expand_limits(x = c(2020:2026.287), y = c(400:435)) +
+  scale_y_continuous(name = c("CO2 concentration (ppm)")) +
+  scale_x_continuous(name = c("time (year)")) +
+  geom_point(aes(y = mean), size = 2, color = "red") +
+  geom_line(aes(y = mean), size = 1) +
+  geom_ribbon(aes(ymin = lower.80, ymax = upper.80), fill = "blue", alpha = 0.3) +
+  geom_ribbon(aes(ymin = lower.95, ymax = upper.95), fill = "blue", alpha = 0.3)
+print(head(predicted.dat5))
+print(gg)
+```  
+  
+blue shading: confidence intervals representing   uncertainty -  
+inner band: 80% of the time, the predicted value falls into that range  
+outer band: 95% of the time, the predicted value falls into that range  
+
+notice that the confidence intervals get wider over time; this is because we are less confident about our prediction more into the future  
+(could look at forcasts for 10 years, 20 years, 50 years etc. but they may not be great estimates and are only a function of the current data we have)
