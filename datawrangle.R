@@ -9,5 +9,13 @@ data <- dat %>%
          "szn_adj_fill" = "seasonally_adjusted_filled")
 data[data==-99.99] <- NA
 
+diff <- diff(data$CO2)
+data.diff <- ts(diff, start=c(1958,1), frequency=12)
+
+diff12 <- diff(diff,12)
+
+fit1 <- arima(data$CO2, order = c(3,1,1), seasonal = list(order=c(0,1,1),period=12))
+
+
 
 
